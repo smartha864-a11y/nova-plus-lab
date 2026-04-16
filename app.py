@@ -1,9 +1,42 @@
 from flask import Flask, render_template_string, request, redirect, url_for
+import sqlite3
 
 app = Flask(__name__)
+DB_NAME = "nova_lab.db"
 
-patients = []
-tests = []
+def get_conn():
+    conn = sqlite3.connect(DB_NAME)
+    conn.row_factory = sqlite3.Row
+    return conn
+
+def init_db():
+    conn = get_conn()
+    cur = conn.cursor()
+
+    cur.execute("""
+        CREATE TABLE IF NOT EXISTS patients (
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            name TEXT NOT NULL,
+            age TEXT NOT NULL,
+            gender TEXT NOT NULL,
+            phone TEXT NOT NULL
+        )
+    """)
+
+    cur.execute("""
+        CREATE TABLE IF NOT EXISTS tests (
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            patient_name TEXT NOT NULL,
+            test_name TEXT NOT NULL,
+            price INTEGER NOT NULL,
+            paid INTEGER NOT NULL,
+            due INTEGER NOT NULL,
+            status TEXT NOT NULL
+        )
+    """)
+
+    conn.commit()
+    conn.close()
 
 html = """
 <!DOCTYPE html>
@@ -221,10 +254,10 @@ button, .back-link {
             </tr>
             {% for p in patients %}
             <tr>
-                <td>{{ p.name }}</td>
-                <td>{{ p.age }}</td>
-                <td>{{ p.gender }}</td>
-                <td>{{ p.phone }}</td>
+                <td>{{ p["name"] }}</td>
+                <td>{{ p["age"] }}</td>
+                <td>{{ p["gender"] }}</td>
+                <td>{{ p["phone"] }}</td>
             </tr>
             {% endfor %}
         </table>
@@ -247,18 +280,18 @@ button, .back-link {
             </tr>
             {% for t in tests %}
             <tr>
-                <td>{{ t.patient }}</td>
-                <td>{{ t.test }}</td>
-                <td>{{ t.price }}</td>
-                <td>{{ t.paid }}</td>
-                <td>{{ t.due }}</td>
+                <td>{{ t["patient_name"] }}</td>
+                <td>{{ t["test_name"] }}</td>
+                <td>{{ t["price"] }}</td>
+                <td>{{ t["paid"] }}</td>
+                <td>{{ t["due"] }}</td>
                 <td>
-                    {% if t.status == 'مدفوع' %}
-                        <span class="badge-paid">{{ t.status }}</span>
-                    {% elif t.status == 'جزئي' %}
-                        <span class="badge-partial">{{ t.status }}</span>
+                    {% if t["status"] == 'مدفوع' %}
+                        <span class="badge-paid">{{ t["status"] }}</span>
+                    {% elif t["status"] == 'جزئي' %}
+                        <span class="badge-partial">{{ t["status"] }}</span>
                     {% else %}
-                        <span class="badge-due">{{ t.status }}</span>
+                        <span class="badge-due">{{ t["status"] }}</span>
                     {% endif %}
                 </td>
             </tr>
@@ -431,7 +464,7 @@ a {
         <select name="patient" required>
             <option value="">اختر المريض</option>
             {% for p in patients %}
-            <option value="{{ p.name }}">{{ p.name }}</option>
+            <option value="{{ p["name"] }}">{{ p["name"] }}</option>
             {% endfor %}
         </select>
 
@@ -456,8 +489,14 @@ a {
 
 @app.route("/")
 def home():
-    total_paid = sum(int(t["paid"]) for t in tests) if tests else 0
-    total_due = sum(int(t["due"]) for t in tests) if tests else 0
+    conn = get_conn()
+    patients = conn.execute("SELECT * FROM patients ORDER BY id DESC").fetchall()
+    tests = conn.execute("SELECT * FROM tests ORDER BY id DESC").fetchall()
+
+    total_paid = conn.execute("SELECT COALESCE(SUM(paid), 0) FROM tests").fetchone()[0]
+    total_due = conn.execute("SELECT COALESCE(SUM(due), 0) FROM tests").fetchone()[0]
+
+    conn.close()
 
     return render_template_string(
         html,
@@ -472,42 +511,59 @@ def home():
 @app.route("/add_patient", methods=["GET", "POST"])
 def add_patient():
     if request.method == "POST":
-        patients.append({
-            "name": request.form["name"],
-            "age": request.form["age"],
-            "gender": request.form["gender"],
-            "phone": request.form["phone"]
-        })
+        conn = get_conn()
+        conn.execute(
+            "INSERT INTO patients (name, age, gender, phone) VALUES (?, ?, ?, ?)",
+            (
+                request.form["name"],
+                request.form["age"],
+                request.form["gender"],
+                request.form["phone"]
+            )
+        )
+        conn.commit()
+        conn.close()
         return redirect(url_for("home"))
 
     return render_template_string(add_patient_html)
 
 @app.route("/add_test", methods=["GET", "POST"])
 def add_test():
+    conn = get_conn()
+    patients = conn.execute("SELECT * FROM patients ORDER BY id DESC").fetchall()
+
     if request.method == "POST":
         price = int(request.form["price"])
         paid = int(request.form["paid"])
         due = price - paid
 
         if due <= 0:
-            status = "مدفوع"
             due = 0
+            status = "مدفوع"
         elif paid == 0:
             status = "آجل"
         else:
             status = "جزئي"
 
-        tests.append({
-            "patient": request.form["patient"],
-            "test": request.form["test"],
-            "price": price,
-            "paid": paid,
-            "due": due,
-            "status": status
-        })
+        conn.execute(
+            "INSERT INTO tests (patient_name, test_name, price, paid, due, status) VALUES (?, ?, ?, ?, ?, ?)",
+            (
+                request.form["patient"],
+                request.form["test"],
+                price,
+                paid,
+                due,
+                status
+            )
+        )
+        conn.commit()
+        conn.close()
         return redirect(url_for("home"))
 
+    conn.close()
     return render_template_string(add_test_html, patients=patients)
+
+init_db()
 
 if __name__ == "__main__":
     app.run()
