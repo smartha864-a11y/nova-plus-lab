@@ -75,7 +75,7 @@ th, td {
 <div class="container">
     <div class="cards">
         <div class="card">👥<br>{{ patients_count }}<br>مرضى</div>
-        <div class="card">🧾<br>0<br>طلبات</div>
+        <div class="card">📄<br>{{ tests_count }}<br>طلبات</div>
         <div class="card">💰<br>0<br>دينار</div>
         <div class="card">⚠️<br>0<br>متبقي</div>
     </div>
