@@ -212,3 +212,34 @@ def add_patient():
 
 if __name__ == "__main__":
     app.run()
+    @app.route("/add_test", methods=["GET", "POST"])
+def add_test():
+    if request.method == "POST":
+        tests.append({
+            "patient": request.form["patient"],
+            "test": request.form["test"],
+            "price": request.form["price"]
+        })
+        return redirect(url_for("home"))
+
+    return render_template_string("""
+    <html lang="ar">
+    <head>
+        <meta charset="UTF-8">
+        <title>طلب فحص</title>
+    </head>
+    <body style="font-family: Arial; background:#f5f7fa;">
+
+        <h2 style="text-align:center;">طلب فحص</h2>
+
+        <form method="post" style="width:300px;margin:auto;">
+            <input name="patient" placeholder="اسم المريض" required><br><br>
+            <input name="test" placeholder="نوع الفحص" required><br><br>
+            <input name="price" placeholder="السعر" required><br><br>
+
+            <button type="submit">حفظ</button>
+        </form>
+
+    </body>
+    </html>
+    """)
