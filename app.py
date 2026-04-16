@@ -187,8 +187,14 @@ button, .back-link {
 </html>
 """
 
-@app.route("/")
+tests = []
+
+@app.route('/')
 def home():
+    return render_template_string(html,
+        patients_count=len(patients),
+        tests_count=len(tests)
+    )
     return render_template_string(
         home_html,
         patients=patients,
