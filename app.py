@@ -1,108 +1,172 @@
 from flask import Flask, render_template_string, request, redirect, url_for
 import psycopg2
+import psycopg2.extras
 import os
+from datetime import datetime
 
 app = Flask(__name__)
 
-DATABASE_URL = "PUT_YOUR_SUPABASE_URL_HERE"
+# ضع رابط قاعدة البيانات هنا إذا تريد مباشرة
+# أو الأفضل خليه في Environment Variable باسم DATABASE_URL
+DATABASE_URL = os.getenv("DATABASE_URL", "PUT_YOUR_SUPABASE_DATABASE_URL_HERE")
+
+# لوجو نوفا
+LOGO_URL = "https://i.imgur.com/placeholder.png"
+# إذا ما تريد رابط خارجي، تقدر بعدين تبدله بأي رابط مباشر للوجو
 
 def get_conn():
     return psycopg2.connect(DATABASE_URL)
 
-@app.route("/")
-def home():
+def init_db():
     conn = get_conn()
     cur = conn.cursor()
 
-    cur.execute("SELECT * FROM patients ORDER BY id DESC")
-    patients = cur.fetchall()
-
-    cur.execute("SELECT * FROM tests ORDER BY id DESC")
-    tests = cur.fetchall()
-
-    cur.execute("SELECT COALESCE(SUM(paid),0) FROM tests")
-    total_paid = cur.fetchone()[0]
-
-    cur.execute("SELECT COALESCE(SUM(due),0) FROM tests")
-    total_due = cur.fetchone()[0]
-
-    conn.close()
-
-    return render_template_string(html,
-        patients=patients,
-        tests=tests,
-        patients_count=len(patients),
-        tests_count=len(tests),
-        total_paid=total_paid,
-        total_due=total_due
+    cur.execute("""
+    CREATE TABLE IF NOT EXISTS patients (
+        id SERIAL PRIMARY KEY,
+        name TEXT NOT NULL,
+        age INTEGER,
+        gender TEXT,
+        phone TEXT,
+        notes TEXT DEFAULT '',
+        created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
     )
+    """)
 
-@app.route("/add_patient", methods=["GET","POST"])
-def add_patient():
-    if request.method == "POST":
-        conn = get_conn()
-        cur = conn.cursor()
+    cur.execute("""
+    CREATE TABLE IF NOT EXISTS test_catalog (
+        id SERIAL PRIMARY KEY,
+        test_name TEXT NOT NULL UNIQUE,
+        category TEXT DEFAULT '',
+        sell_price INTEGER NOT NULL DEFAULT 0,
+        active BOOLEAN DEFAULT TRUE,
+        created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+    )
+    """)
 
-        cur.execute(
-            "INSERT INTO patients (name, age, gender, phone) VALUES (%s,%s,%s,%s)",
-            (
-                request.form["name"],
-                request.form["age"],
-                request.form["gender"],
-                request.form["phone"]
-            )
-        )
+    cur.execute("""
+    CREATE TABLE IF NOT EXISTS orders (
+        id SERIAL PRIMARY KEY,
+        patient_id INTEGER REFERENCES patients(id) ON DELETE CASCADE,
+        patient_name TEXT NOT NULL,
+        total_price INTEGER NOT NULL DEFAULT 0,
+        paid_amount INTEGER NOT NULL DEFAULT 0,
+        due_amount INTEGER NOT NULL DEFAULT 0,
+        status TEXT NOT NULL DEFAULT 'آجل',
+        created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+    )
+    """)
 
-        conn.commit()
-        conn.close()
-        return redirect(url_for("home"))
+    cur.execute("""
+    CREATE TABLE IF NOT EXISTS order_items (
+        id SERIAL PRIMARY KEY,
+        order_id INTEGER REFERENCES orders(id) ON DELETE CASCADE,
+        test_id INTEGER REFERENCES test_catalog(id) ON DELETE SET NULL,
+        test_name TEXT NOT NULL,
+        price INTEGER NOT NULL DEFAULT 0
+    )
+    """)
 
-    return render_template_string(add_patient_html)
+    cur.execute("""
+    CREATE TABLE IF NOT EXISTS purchases (
+        id SERIAL PRIMARY KEY,
+        item_name TEXT NOT NULL,
+        qty INTEGER NOT NULL DEFAULT 0,
+        unit_cost INTEGER NOT NULL DEFAULT 0,
+        total_cost INTEGER NOT NULL DEFAULT 0,
+        supplier TEXT DEFAULT '',
+        notes TEXT DEFAULT '',
+        created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+    )
+    """)
 
-@app.route("/add_test", methods=["GET","POST"])
-def add_test():
-    conn = get_conn()
-    cur = conn.cursor()
-
-    cur.execute("SELECT name FROM patients")
-    patients = cur.fetchall()
-
-    if request.method == "POST":
-        price = int(request.form["price"])
-        paid = int(request.form["paid"])
-        due = price - paid
-
-        if due <= 0:
-            status = "مدفوع"
-            due = 0
-        elif paid == 0:
-            status = "آجل"
-        else:
-            status = "جزئي"
-
-        cur.execute(
-            "INSERT INTO tests (patient_name, test_name, price, paid, due, status) VALUES (%s,%s,%s,%s,%s,%s)",
-            (
-                request.form["patient"],
-                request.form["test"],
-                price,
-                paid,
-                due,
-                status
-            )
-        )
-
-        conn.commit()
-        conn.close()
-        return redirect(url_for("home"))
-
+    conn.commit()
     conn.close()
-    return render_template_string(add_test_html, patients=patients)
 
-# نفس HTML السابق (لا تغيّره)
-html = """ضع هنا كود الواجهة القديم"""
-add_patient_html = """ضع هنا كود صفحة إضافة المريض"""
-add_test_html = """ضع هنا كود طلب الفحص"""
+def fetch_all(query, params=None):
+    conn = get_conn()
+    cur = conn.cursor(cursor_factory=psycopg2.extras.RealDictCursor)
+    cur.execute(query, params or ())
+    rows = cur.fetchall()
+    conn.close()
+    return rows
 
-if __name__ == "__main__":
-    app.run()
+def fetch_one(query, params=None):
+    conn = get_conn()
+    cur = conn.cursor(cursor_factory=psycopg2.extras.RealDictCursor)
+    cur.execute(query, params or ())
+    row = cur.fetchone()
+    conn.close()
+    return row
+
+def execute(query, params=None, returning=False):
+    conn = get_conn()
+    cur = conn.cursor(cursor_factory=psycopg2.extras.RealDictCursor)
+    cur.execute(query, params or ())
+    row = cur.fetchone() if returning else None
+    conn.commit()
+    conn.close()
+    return row
+
+def month_summary():
+    revenue = fetch_one("""
+        SELECT COALESCE(SUM(paid_amount), 0) AS total
+        FROM orders
+        WHERE date_trunc('month', created_at) = date_trunc('month', CURRENT_DATE)
+    """)["total"]
+
+    purchases = fetch_one("""
+        SELECT COALESCE(SUM(total_cost), 0) AS total
+        FROM purchases
+        WHERE date_trunc('month', created_at) = date_trunc('month', CURRENT_DATE)
+    """)["total"]
+
+    return int(revenue), int(purchases), int(revenue) - int(purchases)
+
+base_css = """
+<style>
+*{box-sizing:border-box}
+body{
+    font-family:Arial,sans-serif;
+    background:#f3f4f6;
+    margin:0;
+    direction:rtl;
+    color:#111827;
+}
+.topbar{
+    background:linear-gradient(90deg,#0f172a,#1d4ed8);
+    color:#fff;
+    padding:14px 18px;
+    display:flex;
+    align-items:center;
+    justify-content:space-between;
+    gap:12px;
+}
+.topbar .brand{
+    display:flex;
+    align-items:center;
+    gap:12px;
+}
+.topbar img{
+    width:82px;
+    height:auto;
+    background:white;
+    border-radius:8px;
+    padding:4px;
+}
+.topbar .title{
+    font-size:24px;
+    font-weight:bold;
+}
+.topbar .subtitle{
+    font-size:12px;
+    opacity:.9;
+}
+.container{
+    max-width:1200px;
+    margin:auto;
+    padding:20px;
+}
+.cards{
+    display:grid;
+    grid-template
