@@ -195,12 +195,8 @@ def home():
         patients_count=len(patients),
         tests_count=len(tests)
     )
-    return render_template_string(
-        home_html,
-        patients=patients,
-        patients_count=len(patients)
-    )
-
+    
+    
 @app.route("/add_patient", methods=["GET", "POST"])
 def add_patient():
     if request.method == "POST":
